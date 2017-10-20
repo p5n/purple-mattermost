@@ -147,7 +147,7 @@ json_array_from_string(const gchar *str)
 #define MATTERMOST_SERVER_SPLIT_CHAR '|'
 
 #define MATTERMOST_CHANNEL_SEPARATOR_VISUAL " / "
-//#define MATTERMOST_CHANNEL_SEPARATOR "---"
+#define MATTERMOST_CHANNEL_SEPARATOR "--"
 #define MATTERMOST_CHANNEL_OPEN 'O'
 #define MATTERMOST_CHANNEL_PRIVATE 'P'
 #define MATTERMOST_CHANNEL_DIRECT 'D'
@@ -428,6 +428,8 @@ typedef struct {
 	GHashTable *one_to_ones_rev;	// A store of known usernames's -> room_id's
 	GHashTable *group_chats;			// A store of known multi-user room_id's -> room name's
 	GHashTable *group_chats_rev;	// A store of known multi-user room name's -> room_id's
+	GHashTable *group_chats_human_name_to_id;	// A store of known multi-user room name's + team name -> room_id's
+	GHashTable *group_chats_id_to_human_name;	// A store of known multi-user room_id -> room name + team name
 	GHashTable *group_chats_creators; // chat_id -> creator_id
 	GHashTable *sent_message_ids; // A store of message id's that we generated from this instance
 	GHashTable *result_callbacks; // Result ID -> Callback function
@@ -435,6 +437,7 @@ typedef struct {
 	GHashTable *ids_to_usernames; // user id -> username
 	GHashTable *teams;						// A list of known team_id's -> team names
 	GHashTable *teams_display_names; // an descriptive names too.
+	GHashTable *teams_name_to_id; // team-name to team-id map
 	GHashTable *channel_teams;		// A list of channel_id -> team_id to know what team a channel is in
 	GQueue *received_message_queue; // A store of the last 10 received message id's for de-dup
 
@@ -1583,6 +1586,13 @@ mm_add_channels_to_blist(MattermostAccount *ma, JsonNode *node, gpointer user_da
 
 			g_hash_table_replace(ma->group_chats, g_strdup(channel->id), g_strdup(channel->name));
 			g_hash_table_replace(ma->group_chats_rev, g_strdup(channel->name), g_strdup(channel->id));
+
+      gchar *team_name = g_hash_table_lookup(ma->teams, channel->team_id);
+      gchar *hrname = g_strconcat(channel->name, MATTERMOST_CHANNEL_SEPARATOR, team_name, NULL);
+
+      g_hash_table_replace(ma->group_chats_human_name_to_id, g_strdup(hrname), g_strdup(channel->id));
+      g_hash_table_replace(ma->group_chats_id_to_human_name, g_strdup(channel->id), g_strdup(hrname));
+
 			g_hash_table_replace(ma->channel_teams, g_strdup(channel->id), g_strdup(channel->team_id));
 
 			if (channel->creator_id) {
@@ -1708,6 +1718,7 @@ mm_got_teams(MattermostAccount *ma, JsonNode *node, gpointer user_data)
 		const gchar *display_name = json_object_get_string_member(team, "display_name");
 
 		g_hash_table_replace(ma->teams, g_strdup(team_id), g_strdup(name));
+		g_hash_table_replace(ma->teams_name_to_id, g_strdup(name), g_strdup(team_id));
 		g_hash_table_replace(ma->teams_display_names, g_strdup(team_id), g_strdup(display_name));
 
 		mm_get_open_channels_for_team(ma, team_id);
@@ -1806,6 +1817,10 @@ mm_get_info(PurpleConnection *pc,const gchar *username)
 		g_free(info);
 		return;
 	}
+
+  if(strstr(username, MATTERMOST_CHANNEL_SEPARATOR)) {
+		username = g_hash_table_lookup(ma->group_chats_human_name_to_id, username);
+  }
 
 	if (buddy == NULL) {
 		buddy = purple_buddy_new(ma->account, username, NULL);
@@ -3087,13 +3102,7 @@ mm_roomlist_got_list(MattermostAccount *ma, JsonNode *node, gpointer user_data)
 	guint i, len = json_array_get_length(channels);
 	PurpleRoomlistRoom *team_category = NULL;
 	const gchar *team_id = mmtrl->team_id;
-	const gchar *team_name;
-
-	team_name = g_strconcat(g_hash_table_lookup(ma->teams_display_names, team_id), " ", mmtrl->team_desc, NULL);
-
-//	team_category = purple_roomlist_room_new(PURPLE_ROOMLIST_ROOMTYPE_CATEGORY, team_name, NULL);
-//	purple_roomlist_room_add_field(roomlist, team_category, team_id);
-//	purple_roomlist_room_add(roomlist, team_category);
+  const gchar *team_name = g_hash_table_lookup(ma->teams, team_id);
 
 	for (i = 0; i < len; i++) {
 		JsonObject *channel = json_array_get_object_element(channels, i);
@@ -3109,7 +3118,6 @@ mm_roomlist_got_list(MattermostAccount *ma, JsonNode *node, gpointer user_data)
 		const gchar *header = json_object_get_string_member(channel, "header");
 		const gchar *purpose = json_object_get_string_member(channel, "purpose");
 		const gchar *team_id = json_object_get_string_member(channel, "team_id");
-		const gchar *team_name = g_hash_table_lookup(ma->teams, team_id);
 
 		PurpleRoomlistRoom *room;
 		const gchar *type_str;
@@ -3123,8 +3131,9 @@ mm_roomlist_got_list(MattermostAccount *ma, JsonNode *node, gpointer user_data)
 			default:	type_str = _("Unknown"); break;
 		}
 
-		room = purple_roomlist_room_new(PURPLE_ROOMLIST_ROOMTYPE_ROOM,
-						id, team_category);
+    const gchar *human_name = g_strconcat(name, MATTERMOST_CHANNEL_SEPARATOR, team_name, NULL);
+
+		room = purple_roomlist_room_new(PURPLE_ROOMLIST_ROOMTYPE_ROOM, human_name, NULL);
 		purple_roomlist_room_add_field(roomlist, room, name);
 		purple_roomlist_room_add_field(roomlist, room, team_id);
 		purple_roomlist_room_add_field(roomlist, room, team_name);
@@ -3136,6 +3145,8 @@ mm_roomlist_got_list(MattermostAccount *ma, JsonNode *node, gpointer user_data)
 		purple_roomlist_room_add(roomlist, room);
 		mm_set_group_chat(ma, team_id, name, id);
 		g_hash_table_replace(ma->channel_teams, g_strdup(id), g_strdup(team_id));
+		g_hash_table_replace(ma->group_chats_human_name_to_id, g_strdup(human_name), g_strdup(id));
+		g_hash_table_replace(ma->group_chats_id_to_human_name, g_strdup(id), g_strdup(human_name));
 		g_free(tmp_h);
 		g_free(tmp_p);
 	}
@@ -3239,7 +3250,6 @@ mm_roomlist_get_list(PurpleConnection *pc)
 		// Get a list of channels the user has already joined
 		mmtrl = g_new0(MatterMostTeamRoomlist, 1);
 		mmtrl->team_id = g_strdup(team_id);
-		mmtrl->team_desc = g_strdup(_(": Joined channels"));
 		mmtrl->roomlist = roomlist;
 
 		url = mm_build_url(ma, "/api/v3/teams/%s/channels/", team_id);
@@ -3248,11 +3258,9 @@ mm_roomlist_get_list(PurpleConnection *pc)
 
 		ma->roomlist_team_count++;
 
-
 		// Get a list of channels the user has *not* yet joined
 		mmtrl = g_new0(MatterMostTeamRoomlist, 1);
 		mmtrl->team_id = g_strdup(team_id);
-		mmtrl->team_desc = g_strdup(_(": More channels"));
 		mmtrl->roomlist = roomlist;
 
 		url = mm_build_url(ma, "/api/v3/teams/%s/channels/more/0/9999", team_id);
@@ -3262,9 +3270,6 @@ mm_roomlist_get_list(PurpleConnection *pc)
 		ma->roomlist_team_count++;
 	}
 
-	while(ma->roomlist_team_count > 0) sleep(1); // FIXME: wait for all rooms
-
-	purple_roomlist_set_in_progress(roomlist, FALSE);
 	return roomlist;
 }
 
@@ -3434,6 +3439,8 @@ mm_login(PurpleAccount *account)
 	ma->one_to_ones_rev = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
 	ma->group_chats = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
 	ma->group_chats_rev = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+	ma->group_chats_human_name_to_id = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+	ma->group_chats_id_to_human_name = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
 	ma->group_chats_creators = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
 	ma->sent_message_ids = g_hash_table_new_full(g_str_insensitive_hash, g_str_insensitive_equal, g_free, NULL);
 	ma->result_callbacks = g_hash_table_new_full(g_direct_hash, g_direct_equal, NULL, g_free);
@@ -3441,6 +3448,7 @@ mm_login(PurpleAccount *account)
 	ma->ids_to_usernames = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
 	ma->teams = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
 	ma->teams_display_names = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+	ma->teams_name_to_id = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
 	ma->channel_teams = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
 	ma->received_message_queue = g_queue_new();
 
@@ -3523,6 +3531,10 @@ mm_close(PurpleConnection *pc)
 	g_hash_table_unref(ma->one_to_ones_rev);
 	g_hash_table_remove_all(ma->group_chats);
 	g_hash_table_unref(ma->group_chats);
+	g_hash_table_remove_all(ma->group_chats_rev);
+	g_hash_table_unref(ma->group_chats_rev);
+	g_hash_table_remove_all(ma->group_chats_human_name_to_id);
+	g_hash_table_unref(ma->group_chats_human_name_to_id);
 	g_hash_table_remove_all(ma->group_chats_creators);
 	g_hash_table_unref(ma->group_chats_creators);
 	g_hash_table_remove_all(ma->sent_message_ids);
@@ -3537,6 +3549,8 @@ mm_close(PurpleConnection *pc)
 	g_hash_table_unref(ma->teams);
 	g_hash_table_remove_all(ma->teams_display_names);
 	g_hash_table_unref(ma->teams_display_names);
+	g_hash_table_remove_all(ma->teams_name_to_id);
+	g_hash_table_unref(ma->teams_name_to_id);
 	g_hash_table_remove_all(ma->channel_teams);
 	g_hash_table_unref(ma->channel_teams);
 	g_queue_free(ma->received_message_queue);
@@ -4379,23 +4393,31 @@ static void
 mm_join_chat(PurpleConnection *pc, GHashTable *chatdata)
 {
 	MattermostAccount *ma = purple_connection_get_protocol_data(pc);
-	const gchar *id = g_hash_table_lookup(chatdata, "id");
+	const gchar *id = NULL;
+	const gchar *hrid = g_hash_table_lookup(chatdata, "id");
 	const gchar *name = g_hash_table_lookup(chatdata, "name");
 	const gchar *team_id = g_hash_table_lookup(chatdata, "team_id");
 	guint id_hash;
 	PurpleChatConversation *chatconv;
 
-	if (id == NULL && name == NULL) {
+	if (hrid == NULL && name == NULL) {
 		//What do?
 		return;
 	}
 
+	if (hrid == NULL) {
+		id = g_hash_table_lookup(ma->group_chats_rev, name);
+    purple_debug_misc("%s: hrid was NULL, name = %s, id now is %s\n", __FUNCTION__, name, id);
+	} else {
+		id = g_hash_table_lookup(ma->group_chats_human_name_to_id, hrid);
+    purple_debug_misc("%s: new id %s\n", __FUNCTION__, id);
+  }
+
 	if (name == NULL) {
 		name = g_hash_table_lookup(ma->group_chats, id);
+    purple_debug_misc("%s: name was NULL, id = %s, name now is %s\n", __FUNCTION__, id, name);
 	}
-	if (id == NULL) {
-		id = g_hash_table_lookup(ma->group_chats_rev, name);
-	}
+
 	//TODO use the api look up name info from the id
 	if (id == NULL) {
 		return;
@@ -4411,7 +4433,7 @@ mm_join_chat(PurpleConnection *pc, GHashTable *chatdata)
 
 	mm_set_group_chat(ma, team_id, name, id);
 
-	chatconv = purple_serv_got_joined_chat(pc, id_hash, id /*name*/);
+	chatconv = purple_serv_got_joined_chat(pc, id_hash, hrid);
 	purple_conv_chat_set_id(chatconv, g_str_hash(id));
 	purple_conversation_set_data(PURPLE_CONVERSATION(chatconv), "id", g_strdup(id));
 	purple_conversation_set_data(PURPLE_CONVERSATION(chatconv), "team_id", g_strdup(team_id));
@@ -5147,6 +5169,11 @@ mm_add_buddy(PurpleConnection *pc, PurpleBuddy *buddy, PurpleGroup *group, const
 	}
 
 	if (purple_str_has_suffix(buddy_name, MATTERMOST_BOT_LABEL)) {
+		purple_blist_remove_buddy(buddy);
+		return;
+	}
+
+	if (strchr(buddy_name, '/')) {
 		purple_blist_remove_buddy(buddy);
 		return;
 	}
