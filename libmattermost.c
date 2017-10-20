@@ -1600,7 +1600,7 @@ mm_add_channels_to_blist(MattermostAccount *ma, JsonNode *node, gpointer user_da
 			}
 
 			if (autojoin) {
-				PurpleChatConversation *conv = purple_serv_got_joined_chat(ma->pc, g_str_hash(channel->id), alias);
+				PurpleChatConversation *conv = purple_serv_got_joined_chat(ma->pc, g_str_hash(channel->id), hrname);
 
 				purple_conv_chat_set_id(conv, g_str_hash(channel->id));
 				purple_conversation_set_data(PURPLE_CONVERSATION(conv), "id", g_strdup(channel->id));
@@ -1818,18 +1818,18 @@ mm_get_info(PurpleConnection *pc,const gchar *username)
 		return;
 	}
 
-  if(strstr(username, MATTERMOST_CHANNEL_SEPARATOR)) {
-		username = g_hash_table_lookup(ma->group_chats_human_name_to_id, username);
-  }
+	if (strchr(username, '/')) {
+		return;
+	}
+
+  const gchar *hr_chat_name = g_hash_table_lookup(ma->group_chats_id_to_human_name, username);
+  if(hr_chat_name != NULL)
+    username = hr_chat_name;
 
 	if (buddy == NULL) {
 		buddy = purple_buddy_new(ma->account, username, NULL);
 	}
-/*
-	gchar *slash = g_strchr(username, '/');
-	if(slash != NULL)
-		username = slash;
-*/
+
 	url = mm_build_url(ma, "/api/v3/users/name/%s", username);
 	mm_fetch_url(ma, url, NULL, mm_info_response, buddy);
 	g_free(url);
@@ -1962,15 +1962,6 @@ mm_get_users_by_ids_response(MattermostAccount *ma, JsonNode *node, gpointer use
 	for (i=mm_users; i; i=i->next) {
 		MattermostUser *mm_user = i->data;
 		PurpleBuddy *buddy = purple_blist_find_buddy(ma->account, mm_user->username);
-#if 0
-		if (buddy == NULL) {
-			/* FIXME: (not sure if it is proper algorithm)
-			   try to use nickname for MUC users */
-			gchar *slash = g_strchr(mm_user->username, '/');
-			if(slash != NULL)
-				buddy = purple_blist_find_buddy(ma->account, slash);
-		}
-#endif
 		if (buddy == NULL) {
 			buddy = purple_buddy_new(ma->account, mm_user->username, NULL);
 // FIXME:!!!		purple_blist_add_buddy(buddy, NULL, default_group, NULL);
