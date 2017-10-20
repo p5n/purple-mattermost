@@ -4398,15 +4398,12 @@ mm_join_chat(PurpleConnection *pc, GHashTable *chatdata)
 
 	if (hrid == NULL) {
 		id = g_hash_table_lookup(ma->group_chats_rev, name);
-    purple_debug_misc("%s: hrid was NULL, name = %s, id now is %s\n", __FUNCTION__, name, id);
 	} else {
 		id = g_hash_table_lookup(ma->group_chats_human_name_to_id, hrid);
-    purple_debug_misc("%s: new id %s\n", __FUNCTION__, id);
   }
 
 	if (name == NULL) {
 		name = g_hash_table_lookup(ma->group_chats, id);
-    purple_debug_misc("%s: name was NULL, id = %s, name now is %s\n", __FUNCTION__, id, name);
 	}
 
 	//TODO use the api look up name info from the id
