@@ -96,7 +96,7 @@ PURPLE_C_FILES := libmattermost.c $(C_FILES)
 all: $(MATTERMOST_TARGET)
 
 libmattermost.so: $(PURPLE_C_FILES) $(PURPLE_COMPAT_FILES)
-	$(CC) -fPIC $(CFLAGS) -shared -o $@ $^ $(LDFLAGS) `$(PKG_CONFIG) purple glib-2.0 json-glib-1.0 --libs --cflags` -Ipurple2compat -g -ggdb -lmarkdown
+	$(CC) -fPIC $(CFLAGS) -shared -o $@ $^ $(LDFLAGS) `$(PKG_CONFIG) purple glib-2.0 json-glib-1.0 --libs --cflags` -g -Ipurple2compat -g -ggdb -lmarkdown
 
 libmattermost3.so: $(PURPLE_C_FILES)
 	$(CC) -fPIC $(CFLAGS) -shared -o $@ $^ $(LDFLAGS) `$(PKG_CONFIG) purple-3 glib-2.0 json-glib-1.0 --libs --cflags` -g -ggdb -lmarkdown
