@@ -1822,10 +1822,10 @@ mm_get_info(PurpleConnection *pc,const gchar *username)
     return;
   }
 
-  if (strchr(username, MATTERMOST_CHANNEL_SEPARATOR)) {
+  if (strstr(username, MATTERMOST_CHANNEL_SEPARATOR) != NULL) {
     /* channel */
     PurpleNotifyUserInfo *user_info = purple_notify_user_info_new();
-    purple_notify_user_info_add_pair_plaintext(user_info,_("Channel"), username);
+    purple_notify_user_info_add_pair_plaintext(user_info,_("Username"), username);
     purple_notify_userinfo(ma->pc, username, user_info, NULL, NULL);
     purple_notify_user_info_destroy(user_info);
     return;
@@ -5183,6 +5183,11 @@ mm_add_buddy(PurpleConnection *pc, PurpleBuddy *buddy, PurpleGroup *group, const
   }
 
   if (strchr(buddy_name, '/')) {
+    purple_blist_remove_buddy(buddy);
+    return;
+  }
+
+  if (strstr(buddy_name, MATTERMOST_CHANNEL_SEPARATOR)) {
     purple_blist_remove_buddy(buddy);
     return;
   }
